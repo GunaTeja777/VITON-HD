@@ -1,0 +1,29 @@
+# .gitignore - project-level ignores
+# Ignore the dataset_final folder (large dataset files)
+dataset_final/
+
+# Ignore model checkpoints and PyTorch weights
+*.pth
+*.pt
+checkpoints/
+VITON-HD/checkpoints/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor folders
+.vscode/
+
+# Log and temporary files
+*.log
+*.tmp
+*.zip
+*.tar
