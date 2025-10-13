@@ -13,6 +13,8 @@ from tqdm import tqdm
 from networks import GMM, BaseNetwork
 from datasets import VITONDataset
 
+torch.backends.cudnn.benchmark = True
+
 
 class TrainOptions:
     """Configuration class for training options"""
@@ -21,7 +23,7 @@ class TrainOptions:
         
         # Dataset parameters
         self.parser.add_argument('--dataset_dir', type=str, 
-                                default='/content/drive/MyDrive/content/dataset_final',
+                                default='/content/drive/MyDrive/viton_dataset',
                                 help='Path to dataset directory')
         self.parser.add_argument('--dataset_mode', type=str, default='train',
                                 help='Subdirectory name (e.g., train, test)')
@@ -30,7 +32,7 @@ class TrainOptions:
         
         # Checkpoint parameters
         self.parser.add_argument('--checkpoint_dir', type=str,
-                                default='/content/drive/MyDrive/content/checkpoints',
+                                default='/content/drive/MyDrive/viton_checkpoints/GMM',
                                 help='Directory containing pretrained checkpoints')
         self.parser.add_argument('--gmm_checkpoint', type=str, default='gmm_final.pth',
                                 help='GMM checkpoint filename')
@@ -112,8 +114,9 @@ class VGGLoss(nn.Module):
             param.requires_grad = False
     
     def forward(self, x, y):
-        x_vgg = self.vgg_layers(x)
-        y_vgg = self.vgg_layers(y)
+        with torch.no_grad():
+            x_vgg = self.vgg_layers(x)
+            y_vgg = self.vgg_layers(y)
         return self.criterion(x_vgg, y_vgg)
 
 
@@ -141,11 +144,8 @@ class GMMTrainer:
         """Initialize GMM model"""
         print("Initializing GMM model...")
         
-        # Input channels: cloth (3) + cloth_mask (1) = 4 for inputA
-        # Input channels: agnostic (3) + pose (3) + parse (13) = 19 for inputB (approximately)
-        # Actual implementation may vary, adjust based on your needs
-        inputA_nc = 4  # cloth + cloth_mask
-        inputB_nc = 3  # We'll use img_agnostic as inputB
+        inputA_nc = 4
+        inputB_nc = 22
         
         self.model = GMM(self.opt, inputA_nc, inputB_nc)
         
@@ -209,21 +209,21 @@ class GMMTrainer:
         
         for i, batch in enumerate(pbar):
             # Move data to device
-            cloth = batch['cloth']['unpaired'].to(self.device)
-            cloth_mask = batch['cloth_mask']['unpaired'].to(self.device)
-            img_agnostic = batch['img_agnostic'].to(self.device)
-            img = batch['img'].to(self.device)
+            cloth = batch['cloth'].to(self.device)
+            cloth_mask = batch['cloth_mask'].to(self.device)
+            img_agnostic = batch['agnostic'].to(self.device)
+            pose = batch['pose'].to(self.device)
+            img = batch['image'].to(self.device)
             
-            # Prepare inputs
-            inputA = torch.cat([cloth, cloth_mask], 1)  # Concatenate cloth and mask
-            inputB = img_agnostic
+            inputA = torch.cat([cloth, cloth_mask], 1)
+            inputB = torch.cat([img_agnostic, pose], 1)
             
             # Forward pass
             self.optimizer.zero_grad()
             theta, warped_grid = self.model(inputA, inputB)
             
             # Warp cloth using the predicted grid
-            warped_cloth = F.grid_sample(cloth, warped_grid, padding_mode='border', align_corners=True)
+            warped_cloth = F.grid_sample(cloth, warped_grid, mode='bilinear', padding_mode='border', align_corners=True)
             
             # Compute losses
             loss_l1 = self.criterion_l1(warped_cloth, img)
@@ -236,6 +236,7 @@ class GMMTrainer:
             
             # Backward pass
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5.0)
             self.optimizer.step()
             
             # Update statistics
